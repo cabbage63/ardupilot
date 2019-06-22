@@ -2,12 +2,6 @@
 
 #include "GCS_Mavlink.h"
 
-void Copter::gcs_send_heartbeat(void)
-{
-    gcs().send_message(MSG_HEARTBEAT);
-}
-
-
 /*
  *  !!NOTE!!
  *
@@ -164,7 +158,7 @@ void GCS_MAVLINK_Copter::send_nav_controller_output() const
         return;
     }
     const Vector3f &targets = copter.attitude_control->get_att_target_euler_cd();
-    const Copter::Mode *flightmode = copter.flightmode;
+    const Mode *flightmode = copter.flightmode;
     mavlink_msg_nav_controller_output_send(
         chan,
         targets.x * 1.0e-2f,
@@ -1261,7 +1255,7 @@ void Copter::mavlink_delay_cb()
     uint32_t tnow = millis();
     if (tnow - last_1hz > 1000) {
         last_1hz = tnow;
-        gcs_send_heartbeat();
+        gcs().send_message(MSG_HEARTBEAT);
         gcs().send_message(MSG_SYS_STATUS);
     }
     if (tnow - last_50hz > 20) {

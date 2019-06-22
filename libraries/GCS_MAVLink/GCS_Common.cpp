@@ -57,6 +57,9 @@
   #include <AP_ToshibaCAN/AP_ToshibaCAN.h>
 #endif
 
+#include <AP_BattMonitor/AP_BattMonitor.h>
+#include <AP_GPS/AP_GPS.h>
+
 extern const AP_HAL::HAL& hal;
 
 uint32_t GCS_MAVLINK::last_radio_status_remrssi_ms;
@@ -267,13 +270,13 @@ void GCS_MAVLINK::send_power_status(void)
                                   hal.analogin->power_status_flags());
 }
 
-void GCS_MAVLINK::send_battery_status(const AP_BattMonitor &battery,
-                                      const uint8_t instance) const
+void GCS_MAVLINK::send_battery_status(const uint8_t instance) const
 {
     // catch the battery backend not supporting the required number of cells
     static_assert(sizeof(AP_BattMonitor::cells) >= (sizeof(uint16_t) * MAVLINK_MSG_BATTERY_STATUS_FIELD_VOLTAGES_LEN),
                   "Not enough battery cells for the MAVLink message");
 
+    const AP_BattMonitor &battery = AP::battery();
     float temp;
     bool got_temperature = battery.get_temperature(temp, instance);
 
@@ -317,7 +320,7 @@ bool GCS_MAVLINK::send_battery_status() const
     for(uint8_t i = 0; i < battery.num_instances(); i++) {
         if (battery.get_type(i) != AP_BattMonitor_Params::BattMonitor_Type::BattMonitor_TYPE_NONE) {
             CHECK_PAYLOAD_SIZE(BATTERY_STATUS);
-            send_battery_status(battery, i);
+            send_battery_status(i);
         }
     }
     return true;
@@ -1523,7 +1526,7 @@ void GCS_MAVLINK::update_send()
     // between the last pass through here
     mavlink_status_t *status = mavlink_get_channel_status(chan);
     if (status != nullptr) {
-        send_packet_count += (status->current_tx_seq - last_tx_seq);
+        send_packet_count += uint8_t(status->current_tx_seq - last_tx_seq);
         last_tx_seq = status->current_tx_seq;
     }
 }
@@ -1659,6 +1662,12 @@ void GCS_MAVLINK::send_message(enum ap_message id)
 {
     if (id == MSG_HEARTBEAT) {
         save_signing_timestamp(false);
+        // update the mask of all streaming channels
+        if (is_streaming()) {
+            GCS_MAVLINK::chan_is_streaming |= (1U<<(chan-MAVLINK_COMM_0));
+        } else {
+            GCS_MAVLINK::chan_is_streaming &= ~(1U<<(chan-MAVLINK_COMM_0));
+        }
     }
 
     pushed_ap_message_ids.set(id);
@@ -2385,7 +2394,6 @@ void GCS_MAVLINK::send_autopilot_version() const
 {
     uint32_t flight_sw_version;
     uint32_t middleware_sw_version = 0;
-    uint32_t os_sw_version = 0;
     uint32_t board_version = 0;
     char flight_custom_version[MAVLINK_MSG_AUTOPILOT_VERSION_FIELD_FLIGHT_CUSTOM_VERSION_LEN]{};
     char middleware_custom_version[MAVLINK_MSG_AUTOPILOT_VERSION_FIELD_MIDDLEWARE_CUSTOM_VERSION_LEN]{};
@@ -2421,7 +2429,7 @@ void GCS_MAVLINK::send_autopilot_version() const
         capabilities(),
         flight_sw_version,
         middleware_sw_version,
-        os_sw_version,
+        version.os_sw_version,
         board_version,
         (uint8_t *)flight_custom_version,
         (uint8_t *)middleware_custom_version,
@@ -2492,7 +2500,7 @@ void GCS_MAVLINK::send_home_position() const
         return;
     }
 
-    Location home = AP::ahrs().get_home();
+    const Location &home = AP::ahrs().get_home();
 
     const float q[4] = {1.0f, 0.0f, 0.0f, 0.0f};
     mavlink_msg_home_position_send(
@@ -4251,6 +4259,7 @@ void GCS_MAVLINK::send_sys_status()
     const uint32_t errors = AP::internalerror().errors();
     const uint16_t errors1 = errors & 0xffff;
     const uint16_t errors2 = (errors>>16) & 0xffff;
+    const uint16_t errors4 = AP::internalerror().count() & 0xffff;
 
     mavlink_msg_sys_status_send(
         chan,
@@ -4266,7 +4275,7 @@ void GCS_MAVLINK::send_sys_status()
         errors1,
         errors2,
         0,  // errors3
-        0); // errors4
+        errors4); // errors4
 }
 
 void GCS_MAVLINK::send_extended_sys_state() const
